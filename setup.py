@@ -46,5 +46,6 @@ setup(
     install_requires=[
         "dbt-core>=1.2.0",
         "duckdb>=0.3.2",
+        "sqlglot"
     ],
 )

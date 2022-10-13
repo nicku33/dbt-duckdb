@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from typing import Any, Optional, Tuple
 
 import duckdb
+import agate
+import sqlglot
 
 import dbt.exceptions
 from dbt.adapters.base import Credentials
@@ -24,6 +26,7 @@ class DuckDBCredentials(Credentials):
     database: str = "main"
     schema: str = "main"
     path: str = ":memory:"
+    emulate: str = ""
 
     # any extensions we want to install/load (httpfs, json, etc.)
     extensions: Optional[Tuple[str, ...]] = None
@@ -39,7 +42,7 @@ class DuckDBCredentials(Credentials):
         return "duckdb"
 
     def _connection_keys(self):
-        return ("database", "schema", "path")
+        return ("database", "schema", "path", "emulate")
 
 
 class DuckDBCursorWrapper:
@@ -178,6 +181,28 @@ class DuckDBConnectionManager(SQLConnectionManager):
             logger.debug("Error running SQL: {}".format(sql))
             logger.debug("Rolling back transaction.")
             raise dbt.exceptions.RuntimeException(str(exc)) from exc
+
+    def execute(
+        self, sql: str, auto_begin: bool = False, fetch: bool = False
+    ) -> Tuple[AdapterResponse, agate.Table]:
+        credentials = self.profile.credentials
+        if credentials.emulate:
+
+            # for some reason, just *running* the following statements, seems to alter
+            # the 'sql' variable below s.t.
+            #    23:50:03  Runtime Error in model stg_customers (models/staging/stg_customers.sql)
+            # 23:50:03    Invalid expression / Unexpected token. Line 1, Col: 56.
+            # 23:50:03      drop view if exists "main"."stg_customers__dbt_backup" cascade
+            # 23:50:03
+            # even though that statement is fine. some whitespace wierdness ?
+            # but look it even happens if you feed it a COPY of 'sql'
+            copy_of_sql = str(sql)
+            transformed_statements = sqlglot.transpile(copy_of_sql, read=credentials.emulate, write='duckdb')
+            assert len(transformed_statements) == 1
+
+            # after you figure that out, you can uncomment to actually do something
+            #   sql = transformed_statements[0]
+        return super().execute(sql, auto_begin, fetch)
 
     @classmethod
     def get_credentials(cls, credentials):
